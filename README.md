@@ -1,21 +1,29 @@
-# Next.js template
+# Captionier
 
-This is a Next.js template with shadcn/ui.
+Phase 1 of the Captionier PRD is implemented in this workspace.
 
-## Adding components
+## Setup
 
-To add components to your app, run the following command:
+Create `.env.local` and add:
 
 ```bash
-npx shadcn@latest add button
+SARVAM_API_KEY=your_sarvam_api_key_here
 ```
 
-This will place the ui components in the `components` directory.
+## Run
 
-## Using components
-
-To use the components in your app, import them as follows:
-
-```tsx
-import { Button } from "@/components/ui/button";
+```bash
+npm run dev
 ```
+
+Open [http://localhost:3000](http://localhost:3000) and upload an audio file.
+
+## API Smoke Test
+
+With the Next.js app running locally:
+
+```bash
+node scripts/test-api.ts path/to/audio-file.wav
+```
+
+The script calls `/api/transcribe`, logs the raw normalized response, and exits non-zero if `timestamps.words` is missing or empty.
