@@ -20,4 +20,12 @@ export default defineSchema({
     totalGrantedSeconds: v.number(),
     updatedAt: v.number(),
   }).index("by_clerk_user_id", ["clerkUserId"]),
+  transcriptions: defineTable({
+    clerkUserId: v.string(),
+    filename: v.string(),
+    duration: v.optional(v.number()),
+    language: v.optional(v.string()),
+    srtContent: v.string(),
+    createdAt: v.number(),
+  }).index("by_clerk_user_id", ["clerkUserId"]),
 })

@@ -1,20 +1,20 @@
 import type { Metadata } from "next"
 import { ClerkProvider } from "@clerk/nextjs"
-import { Geist, JetBrains_Mono } from "next/font/google"
+import { Manrope, Playfair_Display } from "next/font/google"
 
 import { ConvexClientProvider } from "@/components/convex-client-provider"
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { cn } from "@/lib/utils"
 
-const fontSans = Geist({
+const fontManrope = Manrope({
   subsets: ["latin"],
   variable: "--font-sans",
 })
 
-const jetbrainsMono = JetBrains_Mono({
+const playfairDisplay = Playfair_Display({
   subsets: ["latin"],
-  variable: "--font-mono",
+  variable: "--font-heading",
 })
 
 export const metadata: Metadata = {
@@ -33,10 +33,10 @@ export default function RootLayout({
       lang="en"
       suppressHydrationWarning
       className={cn(
-        "antialiased",
-        fontSans.variable,
-        "font-mono",
-        jetbrainsMono.variable
+        "antialiased font-sans",
+        fontManrope.variable,
+        playfairDisplay.variable,
+        "bg-black text-white selection:bg-amber-500/30 dark"
       )}
     >
       <body>

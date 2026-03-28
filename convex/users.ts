@@ -199,6 +199,32 @@ export const releaseGenerationCredits = mutation({
   },
 })
 
+export const purchaseDummyCredits = mutation({
+  args: {
+    packageId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const database = ctx as unknown as DatabaseContext
+    const identity = await requireIdentity(database)
+    const now = Date.now()
+    const user = await getOrCreateUser(database, identity, now)
+
+    // For now, regardless of packageId, we append 1 hour (3600 seconds)
+    const extraSeconds = 3600
+    const nextCredits = user.creditsRemainingSeconds + extraSeconds
+    const nextTotal = user.totalGrantedSeconds + extraSeconds
+
+    await database.db.patch(user._id, {
+      creditsRemainingSeconds: nextCredits,
+      totalGrantedSeconds: nextTotal,
+      updatedAt: now,
+    })
+
+    const pendingSeconds = await getPendingSeconds(database, identity.subject)
+    return buildUsageSummary(nextCredits, pendingSeconds, nextTotal)
+  },
+})
+
 async function requireIdentity(ctx: IdentityContext) {
   const identity = await ctx.auth.getUserIdentity()
 

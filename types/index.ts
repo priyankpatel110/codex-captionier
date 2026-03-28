@@ -95,6 +95,7 @@ export interface TranscriptionJob {
   status:
     | "idle"
     | "extracting"
+    | "compressing"
     | "uploading"
     | "transcribing"
     | "generating"

@@ -10,8 +10,10 @@ import {
   IconSparkles,
 } from "@tabler/icons-react"
 import { UserButton } from "@clerk/nextjs"
-import { useQuery } from "convex/react"
+import { useQuery, useMutation } from "convex/react"
+import type { FFmpeg } from "@ffmpeg/ffmpeg"
 import * as React from "react"
+import Link from "next/link"
 
 import { api } from "@/convex/_generated/api"
 import { DownloadButton } from "@/components/DownloadButton"
@@ -98,12 +100,15 @@ export function CaptionierApp() {
   const [usageOverride, setUsageOverride] = React.useState<UsageSummary | null>(
     null
   )
+  const [localMode, setLocalMode] = React.useState<"none" | "extract" | "compress">("none")
+  const ffmpegRef = React.useRef<FFmpeg | null>(null)
 
   const liveUsage = useQuery(api.users.getCurrentUserUsage) as
     | UsageSummary
     | null
     | undefined
   const usage = usageOverride ?? liveUsage ?? null
+  const saveTranscriptionMutation = useMutation(api.transcriptions.saveTranscription)
   const parsedBlocks = React.useMemo(() => parseSRTContent(preview), [preview])
   const validation = React.useMemo(() => validateSRT(preview), [preview])
   const totalDuration =
@@ -126,6 +131,7 @@ export function CaptionierApp() {
   const appState = getAppState(file, job)
   const isProcessing =
     job.status === "extracting" ||
+    job.status === "compressing" ||
     job.status === "uploading" ||
     job.status === "transcribing" ||
     job.status === "generating"
@@ -134,6 +140,19 @@ export function CaptionierApp() {
     remainingSeconds === null ||
     localMediaDuration === null ||
     Math.ceil(localMediaDuration) <= remainingSeconds
+
+  const isVideo = file?.type.startsWith("video/")
+  const fileExceedsLimit = file ? file.size > 500 * 1024 * 1024 : false
+
+  React.useEffect(() => {
+    if (file && isVideo) {
+      if (file.size > 500 * 1024 * 1024 && localMode === "compress") {
+         setLocalMode("extract")
+      }
+    } else {
+      setLocalMode("none")
+    }
+  }, [file, isVideo, localMode])
 
   React.useEffect(() => {
     if (liveUsage) {
@@ -212,25 +231,96 @@ export function CaptionierApp() {
       setPreview("")
       setAudioDurationSeconds(null)
       setUsedChunking(false)
+
+      let uploadFile = file
+
+      if (isVideo && localMode !== "none") {
+        setJob({
+          status: localMode === "extract" ? "extracting" : "compressing",
+          progress: 5,
+          message: localMode === "extract" ? "Extracting audio locally..." : "Compressing video locally...",
+        })
+
+        if (!(window as any).FFmpegWASM) {
+          setJob({ status: "extracting", progress: 2, message: "Downloading video engine..." })
+          await new Promise<void>((resolve, reject) => {
+            const script = document.createElement('script')
+            script.src = '/ffmpeg/ffmpeg.js'
+            script.onload = () => resolve()
+            script.onerror = () => reject(new Error('Failed to download video engine.'))
+            document.head.appendChild(script)
+          })
+        }
+
+        if (!ffmpegRef.current) {
+          ffmpegRef.current = new (window as any).FFmpegWASM.FFmpeg()
+          const baseURL = 'https://unpkg.com/@ffmpeg/core-mt@0.12.6/dist/esm'
+          
+          const loadToBlobURL = async (url: string, mimeType: string) => {
+            const resp = await fetch(url)
+            const buf = await resp.arrayBuffer()
+            const blob = new Blob([buf], { type: mimeType })
+            return URL.createObjectURL(blob)
+          }
+
+          const initFfmpeg = ffmpegRef.current!
+          await initFfmpeg.load({
+            coreURL: await loadToBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+            wasmURL: await loadToBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+            workerURL: await loadToBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
+          })
+
+          initFfmpeg.on('log', ({ message }) => {
+            console.log("[FFmpeg]", message)
+          })
+          
+          initFfmpeg.on('progress', ({ progress }) => {
+            setJob(prev => {
+              if (prev.status !== "extracting" && prev.status !== "compressing") return prev
+              return {
+                ...prev,
+                progress: 5 + Math.round(progress * 20),
+                message: `Local processing... ${Math.round(progress * 100)}%`
+              }
+            })
+          })
+        }
+        const ffmpeg = ffmpegRef.current!
+        const inputName = 'input' + file.name.substring(file.name.lastIndexOf('.'))
+        
+        const inputData = new Uint8Array(await file.arrayBuffer())
+        await ffmpeg.writeFile(inputName, inputData)
+
+        if (localMode === "extract") {
+          await ffmpeg.exec(['-i', inputName, '-vn', '-acodec', 'aac', '-b:a', '128k', 'output.aac'])
+          const data = await ffmpeg.readFile('output.aac')
+          uploadFile = new File([data as BlobPart], file.name.replace(/\.[^/.]+$/, "") + '.aac', { type: 'audio/aac' })
+        } else if (localMode === "compress") {
+          await ffmpeg.exec(['-i', inputName, '-preset', 'ultrafast', '-crf', '28', '-vcodec', 'libx264', '-acodec', 'aac', 'output.mp4'])
+          const data = await ffmpeg.readFile('output.mp4')
+          uploadFile = new File([data as BlobPart], file.name.replace(/\.[^/.]+$/, "") + '_compressed.mp4', { type: 'video/mp4' })
+        }
+      }
+
       setJob({
-        status: file.type.startsWith("video/") ? "extracting" : "uploading",
-        progress: file.type.startsWith("video/") ? 10 : 30,
-        message: file.type.startsWith("video/")
+        status: uploadFile.type.startsWith("video/") ? "extracting" : "uploading",
+        progress: 30,
+        message: uploadFile.type.startsWith("video/")
           ? "Extracting audio from your video before upload."
-          : "Uploading audio to Sarvam.",
+          : "Uploading to Sarvam.",
       })
 
       const formData = new FormData()
-      formData.append("audio", file)
+      formData.append("audio", uploadFile)
       formData.append("mode", settings.mode)
       if (languageCode !== "unknown") {
         formData.append("languageCode", languageCode)
       }
 
-      if (file.type.startsWith("video/")) {
+      if (uploadFile.type.startsWith("video/")) {
         setJob({
           status: "uploading",
-          progress: 30,
+          progress: 35,
           message: "Uploading extracted audio to Sarvam.",
         })
       }
@@ -293,7 +383,21 @@ export function CaptionierApp() {
         detectedLanguage: payload.language_code ?? undefined,
         srtContent,
       })
+
+      if (srtContent) {
+        try {
+          await saveTranscriptionMutation({
+            filename: file.name,
+            duration: payload.audio_duration_seconds ?? localMediaDuration ?? undefined,
+            language: payload.language_code ?? languageCode ?? undefined,
+            srtContent,
+          })
+        } catch (err) {
+          console.error("Failed to save transcription to history:", err)
+        }
+      }
     } catch (error) {
+      console.error("Submit error:", error)
       setJob({
         status: "error",
         progress: 100,
@@ -332,37 +436,34 @@ export function CaptionierApp() {
   }
 
   return (
-    <main className="min-h-svh bg-[radial-gradient(circle_at_top_left,_rgba(242,197,61,0.2),_transparent_24%),linear-gradient(180deg,_transparent,_rgba(17,24,39,0.04))]">
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
-        <div className="space-y-6 border border-border bg-background/90 p-5 backdrop-blur sm:p-8">
-          <header className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:items-start sm:justify-between">
+    <main className="min-h-svh bg-background/50 selection:bg-primary/30 selection:text-primary">
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
+        <div className="space-y-8 border border-border/50 bg-card/40 p-5 shadow-2xl backdrop-blur-xl sm:p-10">
+          <header className="flex flex-col gap-6 border-b border-border/40 pb-8 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-4">
-              <span className="inline-flex items-center gap-2 border border-border bg-card px-3 py-1 text-[11px] tracking-[0.32em] text-muted-foreground uppercase">
+              <span className="inline-flex items-center gap-2 border border-primary/20 bg-primary/5 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.3em] text-primary shadow-sm backdrop-blur-md animate-fade-in-up stagger-1">
                 <IconSparkles className="size-3.5" />
-                Captionier
+                Workspace
               </span>
-              <div className="space-y-3">
-                <h1 className="max-w-4xl text-4xl leading-none font-medium tracking-tight sm:text-5xl">
-                  Generate production-ready SRT captions for Indian language
-                  media.
+              <div className="space-y-3 animate-fade-in-up stagger-2">
+                <h1 className="max-w-4xl font-heading text-4xl font-light tracking-tight text-foreground sm:text-5xl drop-shadow-sm">
+                  Production-Ready <span className="font-serif italic text-primary">Captions</span>
                 </h1>
-                <p className="max-w-3xl text-sm leading-7 text-muted-foreground sm:text-base">
-                  Upload audio or video, choose how captions should be
-                  formatted, and export clean SRT files with synced timing for
-                  Indian language content.
+                <p className="max-w-2xl font-sans text-sm leading-relaxed text-muted-foreground/80 sm:text-base">
+                  Upload audio or video, optimize format settings, and export pristine SRT files with synced timing for Indian language content.
                 </p>
               </div>
             </div>
-            <div className="flex items-center justify-between gap-4 border border-border bg-card px-4 py-3 sm:min-w-72">
-              <div className="space-y-1">
-                <p className="text-[11px] tracking-[0.3em] text-muted-foreground uppercase">
-                  Remaining credits
+            <div className="flex w-full items-center justify-between gap-6 border border-border/50 bg-card/80 p-5 shadow-md backdrop-blur-sm sm:w-auto animate-fade-in-up stagger-3">
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-muted-foreground">
+                  Credits Remaining
                 </p>
-                <p className="text-lg font-medium">
+                <p className="font-heading text-2xl font-light text-foreground drop-shadow-sm">
                   {formatCreditBalance(remainingSeconds)}
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  Free accounts start with 10 minutes of generation time.
+                <p className="font-sans text-[11px] text-muted-foreground/70">
+                  Included in your free plan
                 </p>
               </div>
               <UserButton />
@@ -414,27 +515,44 @@ export function CaptionierApp() {
               ) : null}
 
               {!canGenerate ? (
-                <div className="border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-900 dark:text-amber-200">
-                  Your free credits are exhausted. The paywall hook can attach
-                  here next.
+                <div className="flex flex-col items-center gap-3 border border-border bg-card p-6 text-center shadow-lg rounded-xl">
+                  <div className="flex size-12 items-center justify-center rounded-full bg-amber-500/10 mb-2">
+                    <IconSparkles className="size-6 text-amber-500" />
+                  </div>
+                  <h3 className="text-lg font-bold text-foreground">Out of Generation Credits</h3>
+                  <p className="text-sm text-muted-foreground mb-2">
+                    You've hit the limit for your free generation tier. Upgrade to Pro to add more hours.
+                  </p>
+                  <Link href="/app/billing">
+                    <Button variant="default" className="w-full sm:w-auto shadow-lg shadow-primary/20">
+                      Upgrade to Pro
+                    </Button>
+                  </Link>
                 </div>
               ) : null}
 
-              {!fitsCurrentBalance && localMediaDuration ? (
-                <div className="border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-900 dark:text-amber-200">
-                  This file needs about {formatDuration(localMediaDuration)},
-                  but you only have {formatCreditBalance(remainingSeconds)}{" "}
-                  left.
+              {!fitsCurrentBalance && localMediaDuration && canGenerate ? (
+                <div className="flex flex-col items-center gap-3 border border-amber-500/20 bg-amber-500/5 p-6 text-center shadow-lg rounded-xl">
+                  <h3 className="text-base font-bold text-amber-500">Video Too Long</h3>
+                  <p className="text-sm text-muted-foreground mb-2">
+                    This file requires roughly {formatDuration(localMediaDuration)} of credits,
+                    but you only have {formatCreditBalance(remainingSeconds)} left.
+                  </p>
+                  <Link href="/app/billing">
+                    <Button variant="default" className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white shadow-lg shadow-amber-600/20">
+                      Top Up Credits
+                    </Button>
+                  </Link>
                 </div>
               ) : null}
 
               {appState !== "idle" ? (
-                <div className="space-y-5 border border-border bg-card p-5">
+                <div className="space-y-6 border border-border/50 bg-card p-6 shadow-sm animate-fade-in-up">
                   <div className="space-y-2">
-                    <p className="text-xs tracking-[0.3em] text-muted-foreground uppercase">
-                      Settings
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-foreground">
+                      Configuration
                     </p>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="font-sans text-sm text-muted-foreground/80">
                       Choose the language, output mode, and caption style before
                       generation.
                     </p>
@@ -447,20 +565,89 @@ export function CaptionierApp() {
                     disabled={isProcessing}
                   />
 
+                  {isVideo ? (
+                    <div className="space-y-3 border border-border/50 bg-background/50 p-5 shadow-inner">
+                      <p className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+                        Video Processing Mode
+                      </p>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <label
+                          className={`flex cursor-pointer flex-col gap-1 border px-4 py-3 text-sm transition-all ${localMode === "none" ? "border-primary bg-primary/5 text-primary shadow-[0_0_10px_rgba(255,180,60,0.1)] ring-1 ring-primary/30" : "border-border/50 hover:border-border hover:bg-card text-muted-foreground"}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="local-mode"
+                              value="none"
+                              className="accent-primary"
+                              checked={localMode === "none"}
+                              disabled={isProcessing}
+                              onChange={() => setLocalMode("none")}
+                            />
+                            <span className="font-medium">Upload Original</span>
+                          </div>
+                          <span className="text-[10px] pl-5 opacity-80">Fastest upload if file is small.</span>
+                        </label>
+                        <label
+                          className={`flex cursor-pointer flex-col gap-1 border px-4 py-3 text-sm transition-all ${localMode === "extract" ? "border-primary bg-primary/5 text-primary shadow-[0_0_10px_rgba(255,180,60,0.1)] ring-1 ring-primary/30" : "border-border/50 hover:border-border hover:bg-card text-muted-foreground"}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="local-mode"
+                              value="extract"
+                              className="accent-primary"
+                              checked={localMode === "extract"}
+                              disabled={isProcessing}
+                              onChange={() => setLocalMode("extract")}
+                            />
+                            <span className="font-medium">Audio Only</span>
+                          </div>
+                          <span className="text-[10px] pl-5 opacity-80 text-green-500">Recommended. No crashes.</span>
+                        </label>
+                        <label
+                          className={`flex cursor-pointer flex-col gap-1 border px-4 py-3 text-sm transition-all ${
+                            fileExceedsLimit 
+                              ? "opacity-50 cursor-not-allowed border-border/50 bg-muted/20" 
+                              : localMode === "compress" 
+                                ? "border-primary bg-primary/5 text-primary shadow-[0_0_10px_rgba(255,180,60,0.1)] ring-1 ring-primary/30" 
+                                : "border-border/50 hover:border-border hover:bg-card text-muted-foreground"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="local-mode"
+                              value="compress"
+                              className="accent-primary"
+                              checked={localMode === "compress"}
+                              disabled={isProcessing || fileExceedsLimit}
+                              onChange={() => setLocalMode("compress")}
+                            />
+                            <span className="font-medium">Compress Video</span>
+                          </div>
+                          <span className="text-[10px] pl-5 opacity-80">
+                            {fileExceedsLimit ? "Disabled > 500MB" : "Shrink file locally"}
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                  ) : null}
+
                   <details
-                    className="border border-border bg-background p-4"
+                    className="group border border-border/50 bg-background/50 p-5 shadow-inner marker:text-primary transition-colors hover:border-border"
                     open
                   >
-                    <summary className="cursor-pointer text-sm font-medium">
+                    <summary className="cursor-pointer font-sans text-sm font-semibold tracking-wide text-foreground group-open:text-primary transition-colors">
                       Advanced settings
                     </summary>
-                    <div className="mt-4 space-y-5">
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-sm">
-                          <label htmlFor="max-words">
-                            Words per caption block
+                    <div className="mt-5 space-y-6 font-sans">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between text-xs tracking-wider">
+                          <label htmlFor="max-words" className="text-muted-foreground uppercase">
+                            Words per block
                           </label>
-                          <span className="text-muted-foreground">
+                          <span className="font-mono text-primary font-bold">
                             {settings.maxWordsPerBlock}
                           </span>
                         </div>
@@ -481,12 +668,12 @@ export function CaptionierApp() {
                         />
                       </div>
 
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-sm">
-                          <label htmlFor="max-duration">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between text-xs tracking-wider">
+                          <label htmlFor="max-duration" className="text-muted-foreground uppercase">
                             Max block duration
                           </label>
-                          <span className="text-muted-foreground">
+                          <span className="font-mono text-primary font-bold">
                             {settings.maxDurationSeconds.toFixed(1)}s
                           </span>
                         </div>
@@ -509,17 +696,18 @@ export function CaptionierApp() {
                       </div>
 
                       <div className="space-y-3">
-                        <p className="text-sm font-medium">Output mode</p>
-                        <div className="grid gap-2 sm:grid-cols-2">
+                        <p className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">Output mode</p>
+                        <div className="grid gap-3 sm:grid-cols-2">
                           {MODE_OPTIONS.map((option) => (
                             <label
                               key={option.value}
-                              className="flex items-center gap-3 border border-border px-3 py-3 text-sm"
+                              className={`flex cursor-pointer items-center gap-3 border px-4 py-3 text-sm transition-all ${settings.mode === option.value ? "border-primary bg-primary/5 text-primary shadow-[0_0_10px_rgba(255,180,60,0.1)] ring-1 ring-primary/30" : "border-border/50 hover:border-border hover:bg-card text-muted-foreground"}`}
                             >
                               <input
                                 type="radio"
                                 name="output-mode"
                                 value={option.value}
+                                className="accent-primary"
                                 checked={settings.mode === option.value}
                                 disabled={isProcessing}
                                 onChange={() =>
@@ -529,7 +717,7 @@ export function CaptionierApp() {
                                   }))
                                 }
                               />
-                              <span>{option.label}</span>
+                              <span className="font-medium">{option.label}</span>
                             </label>
                           ))}
                         </div>
@@ -537,23 +725,11 @@ export function CaptionierApp() {
                     </div>
                   </details>
 
-                  <div className="space-y-3 border border-border bg-background p-4">
-                    <div className="flex items-center gap-3">
-                      <IconFileMusic className="size-5 text-muted-foreground" />
-                      <p className="text-sm font-medium">File processing</p>
-                    </div>
-                    <p className="text-sm leading-6 text-muted-foreground">
-                      {file?.type.startsWith("video/")
-                        ? "Video is converted to speech-ready audio automatically before transcription."
-                        : "Audio is processed directly and split automatically when needed for reliable transcription."}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col gap-3 sm:flex-row">
+                  <div className="flex flex-col gap-4 sm:flex-row pt-2">
                     <Button
                       type="button"
                       size="lg"
-                      className="flex-1"
+                      className="flex-1 shadow-[0_0_20px_rgba(255,180,60,0.15)] hover:shadow-[0_0_30px_rgba(255,180,60,0.3)] transition-all font-semibold tracking-wide"
                       onClick={handleSubmit}
                       disabled={
                         !file ||
@@ -562,18 +738,18 @@ export function CaptionierApp() {
                         !fitsCurrentBalance
                       }
                     >
-                      Generate captions
+                      Generate Captions
                     </Button>
                     <Button
                       type="button"
                       size="lg"
                       variant="outline"
-                      className="flex-1"
+                      className="flex-none border-border/50 hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
                       onClick={handleReset}
                       disabled={isProcessing}
                     >
                       <IconRefresh className="size-4" />
-                      Start over
+                      Reset
                     </Button>
                   </div>
                 </div>
@@ -584,17 +760,19 @@ export function CaptionierApp() {
               <ProgressTracker job={job} />
 
               {appState === "done" ? (
-                <section className="space-y-5 border border-border bg-card p-5">
+                <section className="space-y-6 border border-border/50 bg-card p-6 shadow-sm animate-fade-in-up">
                   <div className="space-y-3">
                     <div className="flex items-center gap-3">
-                      <IconCircleCheck className="size-5 text-primary" />
-                      <p className="text-sm font-medium">
-                        Captions generated successfully
+                      <div className="flex size-8 items-center justify-center rounded-full bg-primary/10">
+                        <IconCircleCheck className="size-5 text-primary" />
+                      </div>
+                      <p className="font-sans text-lg font-semibold tracking-wide text-foreground drop-shadow-sm">
+                        Captions Generated Successfully
                       </p>
                     </div>
-                    <p className="text-sm text-muted-foreground">
-                      Review the generated subtitle blocks, check the warnings,
-                      then download or copy the SRT output.
+                    <p className="font-sans text-sm leading-relaxed text-muted-foreground/80 pl-11">
+                      Review the generated subtitle blocks, verify synchronization,
+                      and download or copy the final SRT output.
                     </p>
                   </div>
 
@@ -614,68 +792,72 @@ export function CaptionierApp() {
                     />
                   </div>
 
-                  <div className="space-y-2 border border-border bg-background p-4 text-sm">
-                    <p className="font-medium">Caption quality</p>
-                    <WarningLine
-                      show={shortBlockCount > 0}
-                      text={`${shortBlockCount} blocks are very short (< 0.5s) and may flash too quickly.`}
-                    />
-                    <WarningLine
-                      show={longBlockCount > 0}
-                      text={`${longBlockCount} blocks are very long (> 6s) and may be hard to read.`}
-                    />
-                    <WarningLine
-                      show={syncDiscrepancy > 0.05}
-                      text={`SRT duration differs from audio duration by ${(syncDiscrepancy * 100).toFixed(1)}%, which may indicate sync drift.`}
-                    />
-                    <WarningLine
-                      show={!validation.valid}
-                      text={validation.errors.join(" ")}
-                    />
-                    <WarningLine
-                      show={usedChunking}
-                      text="Long media handling was applied automatically to keep transcription stable."
-                      tone="neutral"
-                    />
-                    {shortBlockCount === 0 &&
-                    longBlockCount === 0 &&
-                    syncDiscrepancy <= 0.05 &&
-                    validation.valid ? (
-                      <p className="text-muted-foreground">
-                        No quality warnings detected for the current SRT output.
-                      </p>
-                    ) : null}
+                  <div className="space-y-3 border border-border/50 bg-background/50 p-5 backdrop-blur-sm">
+                    <p className="font-sans text-sm font-semibold tracking-wide text-foreground">Caption Quality Report</p>
+                    <div className="space-y-1.5 mt-2">
+                      <WarningLine
+                        show={shortBlockCount > 0}
+                        text={`${shortBlockCount} blocks are very short (< 0.5s) and may flash too quickly.`}
+                      />
+                      <WarningLine
+                        show={longBlockCount > 0}
+                        text={`${longBlockCount} blocks are very long (> 6s) and may be hard to read.`}
+                      />
+                      <WarningLine
+                        show={syncDiscrepancy > 0.05}
+                        text={`SRT duration differs from audio length by ${(syncDiscrepancy * 100).toFixed(1)}%, check for sync drift.`}
+                      />
+                      <WarningLine
+                        show={!validation.valid}
+                        text={validation.errors.join(" ")}
+                      />
+                      <WarningLine
+                        show={usedChunking}
+                        text="Long media handling was applied automatically for reliable performance."
+                        tone="neutral"
+                      />
+                      {shortBlockCount === 0 &&
+                      longBlockCount === 0 &&
+                      syncDiscrepancy <= 0.05 &&
+                      validation.valid && 
+                      !usedChunking ? (
+                        <p className="font-mono text-xs text-primary/70 uppercase tracking-widest mt-2 flex items-center gap-2">
+                          <span className="inline-block size-1.5 rounded-full bg-primary"></span>
+                          No quality warnings detected
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
 
                   <SRTPreview value={preview} />
 
-                  <div className="flex flex-col gap-3 sm:flex-row">
+                  <div className="flex flex-col gap-4 sm:flex-row pt-4">
                     <DownloadButton
                       content={job.srtContent ?? preview}
                       filename={downloadName}
                       disabled={job.status !== "done"}
-                      className="flex-1"
+                      className="flex-1 shadow-[0_0_15px_rgba(255,180,60,0.1)] transition-shadow hover:shadow-[0_0_25px_rgba(255,180,60,0.25)] font-semibold tracking-wide"
                     />
                     <Button
                       type="button"
                       size="lg"
                       variant="outline"
-                      className="flex-1"
+                      className="flex-1 border-border/50 hover:bg-background hover:text-primary transition-all shadow-sm"
                       onClick={handleCopy}
                       disabled={!preview}
                     >
                       <IconCopy className="size-4" />
-                      {copied ? "Copied" : "Copy SRT"}
+                      {copied ? "Copied to Clipboard" : "Copy SRT"}
                     </Button>
                     <Button
                       type="button"
                       size="lg"
                       variant="outline"
-                      className="flex-1"
+                      className="flex-none border-border/50 hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-all shadow-sm"
                       onClick={handleReset}
                     >
                       <IconRefresh className="size-4" />
-                      Start over
+                      Reset
                     </Button>
                   </div>
                 </section>
@@ -700,12 +882,12 @@ function MetricCard({
   icon?: React.ReactNode
 }) {
   return (
-    <div className="space-y-2 border border-border bg-background p-4">
-      <div className="flex items-center gap-2 text-xs tracking-[0.24em] text-muted-foreground uppercase">
+    <div className="space-y-3 border border-border/50 bg-card p-5 shadow-sm transition-colors hover:border-primary/30 group">
+      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground group-hover:text-primary/80 transition-colors">
         {icon}
         <span>{label}</span>
       </div>
-      <p className="text-sm font-medium break-words">{value}</p>
+      <p className="font-heading text-2xl font-light text-foreground break-words">{value}</p>
     </div>
   )
 }
@@ -722,13 +904,13 @@ function StatusCard({
   detail: string
 }) {
   return (
-    <div className="space-y-3 border border-border bg-card p-4">
-      <div className="flex items-center gap-2 text-xs tracking-[0.24em] text-muted-foreground uppercase">
+    <div className="space-y-4 border border-border/50 bg-card p-6 shadow-sm transition-all hover:border-primary/30 hover:shadow-lg group">
+      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground group-hover:text-primary/80 transition-colors">
         {icon}
         <span>{label}</span>
       </div>
-      <p className="text-lg font-medium">{value}</p>
-      <p className="text-sm leading-6 text-muted-foreground">{detail}</p>
+      <p className="font-heading text-3xl font-light text-foreground drop-shadow-sm">{value}</p>
+      <p className="font-sans text-[11px] leading-relaxed text-muted-foreground/80">{detail}</p>
     </div>
   )
 }
@@ -747,15 +929,20 @@ function WarningLine({
   }
 
   return (
-    <p
-      className={
-        tone === "warning"
-          ? "text-yellow-700 dark:text-yellow-300"
-          : "text-muted-foreground"
-      }
-    >
-      {tone === "warning" ? "Warning: " : ""}
-      {text}
+    <p className="flex items-start gap-2 font-mono text-[10px] leading-relaxed uppercase tracking-widest group">
+      <span className={tone === "warning" ? "text-yellow-500 font-bold" : "text-muted-foreground/50"}>
+        &gt;
+      </span>
+      <span
+        className={
+          tone === "warning"
+            ? "text-yellow-600 dark:text-yellow-400"
+            : "text-muted-foreground"
+        }
+      >
+        {tone === "warning" ? "WARNING: " : ""}
+        {text}
+      </span>
     </p>
   )
 }

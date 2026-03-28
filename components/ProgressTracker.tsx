@@ -7,6 +7,7 @@ import type { TranscriptionJob } from "@/types"
 const STATUS_LABELS: Record<TranscriptionJob["status"], string> = {
   idle: "Waiting",
   extracting: "Extracting audio from video",
+  compressing: "Compressing video locally",
   uploading: "Uploading audio to Sarvam",
   transcribing: "Transcribing with Saaras v3",
   generating: "Generating SRT timestamps",
@@ -44,41 +45,64 @@ export function ProgressTracker({ job }: ProgressTrackerProps) {
   }, [active, job.status])
 
   return (
-    <div className="space-y-4 border border-border bg-card p-5">
-      <div className="flex items-start justify-between gap-4">
+    <div className="relative overflow-hidden space-y-5 border border-border bg-card p-6 shadow-lg">
+      {active && (
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-primary/5 to-transparent opacity-50" />
+      )}
+
+      <div className="relative z-10 flex items-start justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
-            Progress
+          <div className="flex items-center gap-3">
+            {active && (
+              <div className="size-1.5 animate-pulse rounded-full bg-primary shadow-[0_0_8px_rgba(255,180,60,0.8)]" />
+            )}
+            <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-foreground">
+              Job Status
+            </p>
+          </div>
+          <p className="font-heading mt-3 text-lg font-medium tracking-wide text-primary">
+            {STATUS_LABELS[job.status]}
           </p>
-          <p className="mt-2 text-sm font-medium">{STATUS_LABELS[job.status]}</p>
-          <p className="mt-1 text-sm text-muted-foreground">{job.message}</p>
+          <p className="mt-1 font-mono text-xs tracking-tight text-muted-foreground/80">
+            {job.message}
+          </p>
         </div>
         <div className="text-right">
-          <p className="text-2xl font-medium tabular-nums">{job.progress}%</p>
+          <p className="font-heading text-3xl font-light tabular-nums text-foreground drop-shadow-sm">
+            {job.progress}%
+          </p>
           {active ? (
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
               {formatElapsed(elapsedSeconds)} elapsed
             </p>
           ) : null}
         </div>
       </div>
-      <div className="h-2 overflow-hidden border border-border bg-background">
+      
+      <div className="relative z-10 h-1 overflow-hidden bg-background border-y border-border/50">
         <div
-          className="h-full bg-primary transition-[width] duration-500"
+          className="h-full bg-primary shadow-[0_0_10px_rgba(255,180,60,1)] transition-[width] duration-500 ease-out"
           style={{ width: `${job.progress}%` }}
         />
       </div>
-      {elapsedSeconds > 30 && active ? (
-        <p className="text-xs text-muted-foreground">
-          This may take a moment for longer files.
-        </p>
-      ) : null}
-      {job.detectedLanguage ? (
-        <p className="text-xs text-muted-foreground">
-          Detected language: {job.detectedLanguage}
-        </p>
-      ) : null}
-      {job.error ? <p className="text-sm text-destructive">{job.error}</p> : null}
+
+      <div className="relative z-10 flex flex-col gap-1.5 pt-1">
+        {elapsedSeconds > 30 && active ? (
+          <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">
+            Processing large files may take a moment.
+          </p>
+        ) : null}
+        {job.detectedLanguage ? (
+          <p className="font-mono text-[10px] uppercase tracking-wider text-primary/70">
+            Detected language: {job.detectedLanguage}
+          </p>
+        ) : null}
+        {job.error ? (
+          <p className="font-mono text-xs font-semibold text-destructive shadow-destructive/20 drop-shadow-md">
+            {job.error}
+          </p>
+        ) : null}
+      </div>
     </div>
   )
 }

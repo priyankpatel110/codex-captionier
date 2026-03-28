@@ -35,20 +35,23 @@ export function FileUpload({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <label className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
-          Upload
-        </label>
-        <span className="text-xs text-muted-foreground">
-          MP4, MOV, WAV, MP3, M4A, WebM
+                <div className="flex items-center gap-3">
+                  <div className="size-1.5 rounded-full bg-primary animate-pulse" />
+          <label className="text-xs uppercase tracking-[0.3em] text-foreground font-semibold">
+            Upload Media
+          </label>
+                </div>
+        <span className="text-[10px] uppercase font-mono tracking-widest text-muted-foreground">
+          MP4 • MOV • WAV • MP3 • M4A
         </span>
       </div>
 
       <button
         type="button"
-        className={`flex min-h-56 w-full flex-col items-center justify-center gap-4 border-2 border-dashed px-6 py-8 text-left transition ${
+        className={`group flex min-h-56 w-full flex-col items-center justify-center gap-4 border border-dashed px-6 py-8 text-left transition-all duration-300 ${
           isDragging
-            ? "border-foreground bg-muted/50"
-            : "border-border bg-card hover:border-foreground/30 hover:bg-muted/40"
+            ? "border-primary bg-primary/5 scale-[1.01] shadow-[0_0_30px_rgba(255,180,60,0.1)] ring-1 ring-primary/30"
+            : "border-border bg-card hover:border-primary/50 hover:bg-background hover:shadow-[0_0_20px_rgba(255,180,60,0.05)]"
         } disabled:cursor-not-allowed disabled:opacity-60`}
         onClick={() => inputRef.current?.click()}
         onDragEnter={(event) => {
@@ -72,13 +75,13 @@ export function FileUpload({
         }}
         disabled={disabled}
       >
-        <span className="flex size-14 items-center justify-center border border-border bg-background">
+        <span className="flex size-14 items-center justify-center border border-border bg-background shadow-inner transition-colors duration-300 group-hover:border-primary/50 group-hover:bg-primary/10">
           {file?.type.startsWith("video/") ? (
-            <IconMovie className="size-6" />
+            <IconMovie className="size-6 text-muted-foreground transition-colors group-hover:text-primary" />
           ) : file ? (
-            <IconFileMusic className="size-6" />
+            <IconFileMusic className="size-6 text-muted-foreground transition-colors group-hover:text-primary" />
           ) : (
-            <IconUpload className="size-6" />
+            <IconUpload className="size-6 text-muted-foreground transition-colors group-hover:text-primary" />
           )}
         </span>
 
@@ -100,11 +103,11 @@ export function FileUpload({
       </button>
 
       {file ? (
-        <div className="space-y-3 border border-border bg-card p-4">
+        <div className="space-y-3 border border-border bg-card p-4 shadow-sm transition-all hover:border-primary/30">
           <div className="flex items-center justify-between gap-3">
             <div className="space-y-1">
-              <p className="text-sm font-medium">{file.name}</p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm font-medium tracking-wide text-foreground">{file.name}</p>
+              <p className="text-xs font-mono text-muted-foreground">
                 {fileTypeLabel} • {formatFileSize(file.size)}
               </p>
             </div>
@@ -112,6 +115,7 @@ export function FileUpload({
               type="button"
               size="sm"
               variant="outline"
+              className="border-border hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
               onClick={() => {
                 handleFileSelection(null)
                 if (inputRef.current) {
