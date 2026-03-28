@@ -77,8 +77,16 @@ export interface CaptionSettings {
   mode: TranscriptionMode
 }
 
+export interface UsageSummary {
+  availableSeconds: number
+  creditsRemainingSeconds: number
+  pendingSeconds: number
+  totalGrantedSeconds: number
+}
+
 export interface TranscribeApiResponse extends SarvamTranscribeResponse {
   audio_duration_seconds: number
+  credits: UsageSummary
   used_chunking: boolean
   output_mode: TranscriptionMode
 }

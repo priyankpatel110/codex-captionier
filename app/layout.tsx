@@ -1,6 +1,8 @@
 import type { Metadata } from "next"
+import { ClerkProvider } from "@clerk/nextjs"
 import { Geist, JetBrains_Mono } from "next/font/google"
 
+import { ConvexClientProvider } from "@/components/convex-client-provider"
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { cn } from "@/lib/utils"
@@ -38,7 +40,11 @@ export default function RootLayout({
       )}
     >
       <body>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ClerkProvider>
+          <ConvexClientProvider>
+            <ThemeProvider>{children}</ThemeProvider>
+          </ConvexClientProvider>
+        </ClerkProvider>
       </body>
     </html>
   )

@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server"
 
+import { api } from "@/convex/_generated/api"
 import {
   chunkAudioBuffer,
   extractAudioFromVideo,
   getAudioDurationSeconds,
 } from "@/lib/audio"
+import { createAuthedConvexClient } from "@/lib/convex"
 import {
   SarvamApiError,
   mergeChunkedResponses,
@@ -15,6 +17,7 @@ import type {
   SarvamLanguageCode,
   TranscribeApiResponse,
   TranscriptionMode,
+  UsageSummary,
 } from "@/types"
 
 export const runtime = "nodejs"
@@ -25,6 +28,9 @@ const MAX_DIRECT_UPLOAD_BYTES = 25 * 1024 * 1024
 const MAX_REST_DURATION_SECONDS = 28
 
 export async function POST(request: Request) {
+  let convexClient: Awaited<ReturnType<typeof createAuthedConvexClient>> = null
+  let requestId: string | null = null
+
   try {
     validateServerConfiguration()
     const formData = await request.formData()
@@ -64,9 +70,23 @@ export async function POST(request: Request) {
       : uploadedBuffer
 
     const audioDurationSeconds = await getAudioDurationSeconds(audioBuffer)
+    const reservedSeconds = Math.ceil(audioDurationSeconds)
     const shouldChunk =
       audioBuffer.byteLength > MAX_DIRECT_UPLOAD_BYTES ||
       audioDurationSeconds > MAX_REST_DURATION_SECONDS
+
+    convexClient = await createAuthedConvexClient()
+
+    if (!convexClient) {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 })
+    }
+
+    requestId = crypto.randomUUID()
+
+    await convexClient.client.mutation(api.users.reserveGenerationCredits, {
+      requestId,
+      reservedSeconds,
+    })
 
     const response = shouldChunk
       ? await transcribeChunkedAudio(
@@ -82,17 +102,36 @@ export async function POST(request: Request) {
           withTimestamps: true,
         })
 
+    const credits = (await convexClient.client.mutation(
+      api.users.finalizeGenerationCredits,
+      {
+        requestId,
+      }
+    )) as UsageSummary
+
     const payload: TranscribeApiResponse = {
       ...response,
       audio_duration_seconds: audioDurationSeconds,
+      credits,
       used_chunking: shouldChunk,
       output_mode: mode,
     }
 
     return NextResponse.json(payload)
   } catch (error) {
+    if (requestId && convexClient) {
+      await releaseReservation(convexClient.client, requestId)
+    }
+
     if (error instanceof SarvamApiError) {
-      return NextResponse.json({ error: error.message }, { status: error.status })
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status }
+      )
+    }
+
+    if (isCreditsExhausted(error)) {
+      return NextResponse.json({ error: "CREDITS_EXHAUSTED" }, { status: 402 })
     }
 
     return NextResponse.json(
@@ -105,6 +144,23 @@ export async function POST(request: Request) {
       { status: 500 }
     )
   }
+}
+
+async function releaseReservation(
+  client: NonNullable<
+    Awaited<ReturnType<typeof createAuthedConvexClient>>
+  >["client"],
+  requestId: string
+) {
+  try {
+    await client.mutation(api.users.releaseGenerationCredits, { requestId })
+  } catch {
+    // Preserve the original transcription error.
+  }
+}
+
+function isCreditsExhausted(error: unknown) {
+  return error instanceof Error && error.message.includes("CREDITS_EXHAUSTED")
 }
 
 async function transcribeChunkedAudio(

@@ -2,14 +2,18 @@
 
 import {
   IconCircleCheck,
+  IconClockHour4,
   IconCopy,
   IconFileMusic,
   IconLanguage,
   IconRefresh,
   IconSparkles,
 } from "@tabler/icons-react"
+import { UserButton } from "@clerk/nextjs"
+import { useQuery } from "convex/react"
 import * as React from "react"
 
+import { api } from "@/convex/_generated/api"
 import { DownloadButton } from "@/components/DownloadButton"
 import { FileUpload } from "@/components/FileUpload"
 import { LanguageSelector } from "@/components/LanguageSelector"
@@ -24,6 +28,7 @@ import type {
   TranscribeApiResponse,
   TranscriptionJob,
   TranscriptionMode,
+  UsageSummary,
 } from "@/types"
 
 const LANGUAGE_OPTIONS: LanguageOption[] = [
@@ -69,7 +74,8 @@ const DEFAULT_SETTINGS: CaptionSettings = {
 const IDLE_JOB: TranscriptionJob = {
   status: "idle",
   progress: 0,
-  message: "Select a file to begin the upload, transcription, and SRT generation flow.",
+  message:
+    "Select a file to begin the upload, transcription, and SRT generation flow.",
 }
 
 export function CaptionierApp() {
@@ -79,16 +85,32 @@ export function CaptionierApp() {
   const [job, setJob] = React.useState<TranscriptionJob>(IDLE_JOB)
   const [preview, setPreview] = React.useState("")
   const [downloadName, setDownloadName] = React.useState("captions.srt")
-  const [settings, setSettings] = React.useState<CaptionSettings>(DEFAULT_SETTINGS)
-  const [audioDurationSeconds, setAudioDurationSeconds] = React.useState<number | null>(null)
+  const [settings, setSettings] =
+    React.useState<CaptionSettings>(DEFAULT_SETTINGS)
+  const [audioDurationSeconds, setAudioDurationSeconds] = React.useState<
+    number | null
+  >(null)
   const [usedChunking, setUsedChunking] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
-  const [localMediaDuration, setLocalMediaDuration] = React.useState<number | null>(null)
+  const [localMediaDuration, setLocalMediaDuration] = React.useState<
+    number | null
+  >(null)
+  const [usageOverride, setUsageOverride] = React.useState<UsageSummary | null>(
+    null
+  )
 
+  const liveUsage = useQuery(api.users.getCurrentUserUsage) as
+    | UsageSummary
+    | null
+    | undefined
+  const usage = usageOverride ?? liveUsage ?? null
   const parsedBlocks = React.useMemo(() => parseSRTContent(preview), [preview])
   const validation = React.useMemo(() => validateSRT(preview), [preview])
   const totalDuration =
-    parsedBlocks.length > 0 ? parsedBlocks[parsedBlocks.length - 1].endSeconds : 0
+    parsedBlocks.length > 0
+      ? parsedBlocks[parsedBlocks.length - 1].endSeconds
+      : 0
+  const remainingSeconds = usage?.availableSeconds ?? null
 
   const shortBlockCount = parsedBlocks.filter(
     (block) => block.durationSeconds < 0.5
@@ -107,6 +129,17 @@ export function CaptionierApp() {
     job.status === "uploading" ||
     job.status === "transcribing" ||
     job.status === "generating"
+  const canGenerate = remainingSeconds === null || remainingSeconds > 0
+  const fitsCurrentBalance =
+    remainingSeconds === null ||
+    localMediaDuration === null ||
+    Math.ceil(localMediaDuration) <= remainingSeconds
+
+  React.useEffect(() => {
+    if (liveUsage) {
+      setUsageOverride(liveUsage)
+    }
+  }, [liveUsage])
 
   React.useEffect(() => {
     if (!file) {
@@ -116,7 +149,9 @@ export function CaptionierApp() {
 
     let revoked = false
     const objectUrl = URL.createObjectURL(file)
-    const media = document.createElement(file.type.startsWith("video/") ? "video" : "audio")
+    const media = document.createElement(
+      file.type.startsWith("video/") ? "video" : "audio"
+    )
     media.preload = "metadata"
     media.src = objectUrl
 
@@ -162,6 +197,16 @@ export function CaptionierApp() {
       return
     }
 
+    if (!fitsCurrentBalance) {
+      setJob({
+        status: "error",
+        progress: 100,
+        message: "This file is longer than your remaining credits.",
+        error: "Your free 10-minute balance is exhausted for this file.",
+      })
+      return
+    }
+
     try {
       setCopied(false)
       setPreview("")
@@ -201,18 +246,24 @@ export function CaptionierApp() {
         body: formData,
       })
 
-      const payload = (await response.json()) as TranscribeApiResponse | { error: string }
+      const payload = (await response.json()) as
+        | TranscribeApiResponse
+        | { error: string }
 
       if (!response.ok || "error" in payload) {
         throw new Error(
-          mapErrorMessage("error" in payload ? payload.error : "Transcription failed.")
+          mapErrorMessage(
+            "error" in payload ? payload.error : "Transcription failed."
+          )
         )
       }
 
+      setUsageOverride(payload.credits)
       setJob({
         status: "generating",
         progress: 95,
-        message: "Generating SRT, validating caption quality, and preparing download.",
+        message:
+          "Generating SRT, validating caption quality, and preparing download.",
         detectedLanguage: payload.language_code ?? undefined,
       })
 
@@ -284,24 +335,71 @@ export function CaptionierApp() {
     <main className="min-h-svh bg-[radial-gradient(circle_at_top_left,_rgba(242,197,61,0.2),_transparent_24%),linear-gradient(180deg,_transparent,_rgba(17,24,39,0.04))]">
       <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
         <div className="space-y-6 border border-border bg-background/90 p-5 backdrop-blur sm:p-8">
-          <header className="space-y-4">
-            <span className="inline-flex items-center gap-2 border border-border bg-card px-3 py-1 text-[11px] uppercase tracking-[0.32em] text-muted-foreground">
-              <IconSparkles className="size-3.5" />
-              Captionier
-            </span>
-            <div className="space-y-3">
-              <h1 className="max-w-4xl text-4xl leading-none font-medium tracking-tight sm:text-5xl">
-                Generate production-ready SRT captions for Indian language media.
-              </h1>
-              <p className="max-w-3xl text-sm leading-7 text-muted-foreground sm:text-base">
-                Upload audio or video, choose how captions should be formatted, and
-                export clean SRT files with synced timing for Indian language content.
-              </p>
+          <header className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:items-start sm:justify-between">
+            <div className="space-y-4">
+              <span className="inline-flex items-center gap-2 border border-border bg-card px-3 py-1 text-[11px] tracking-[0.32em] text-muted-foreground uppercase">
+                <IconSparkles className="size-3.5" />
+                Captionier
+              </span>
+              <div className="space-y-3">
+                <h1 className="max-w-4xl text-4xl leading-none font-medium tracking-tight sm:text-5xl">
+                  Generate production-ready SRT captions for Indian language
+                  media.
+                </h1>
+                <p className="max-w-3xl text-sm leading-7 text-muted-foreground sm:text-base">
+                  Upload audio or video, choose how captions should be
+                  formatted, and export clean SRT files with synced timing for
+                  Indian language content.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-4 border border-border bg-card px-4 py-3 sm:min-w-72">
+              <div className="space-y-1">
+                <p className="text-[11px] tracking-[0.3em] text-muted-foreground uppercase">
+                  Remaining credits
+                </p>
+                <p className="text-lg font-medium">
+                  {formatCreditBalance(remainingSeconds)}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Free accounts start with 10 minutes of generation time.
+                </p>
+              </div>
+              <UserButton />
             </div>
           </header>
 
           <section className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
             <div className="space-y-5">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <StatusCard
+                  icon={<IconClockHour4 className="size-4" />}
+                  label="Available now"
+                  value={formatCreditBalance(remainingSeconds)}
+                  detail={
+                    usage
+                      ? `${formatDuration(usage.creditsRemainingSeconds)} total balance, ${formatDuration(usage.pendingSeconds)} pending`
+                      : "Loading your credit balance."
+                  }
+                />
+                <StatusCard
+                  icon={<IconFileMusic className="size-4" />}
+                  label="Current file"
+                  value={
+                    localMediaDuration
+                      ? formatDuration(localMediaDuration)
+                      : "No file selected"
+                  }
+                  detail={
+                    !localMediaDuration
+                      ? "Pick an audio or video file to estimate credit use."
+                      : fitsCurrentBalance
+                        ? "This upload fits within your current balance."
+                        : "This upload exceeds your remaining credits and will be blocked."
+                  }
+                />
+              </div>
+
               <FileUpload
                 file={file}
                 onFileChange={setFile}
@@ -315,10 +413,25 @@ export function CaptionierApp() {
                 </div>
               ) : null}
 
+              {!canGenerate ? (
+                <div className="border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-900 dark:text-amber-200">
+                  Your free credits are exhausted. The paywall hook can attach
+                  here next.
+                </div>
+              ) : null}
+
+              {!fitsCurrentBalance && localMediaDuration ? (
+                <div className="border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-900 dark:text-amber-200">
+                  This file needs about {formatDuration(localMediaDuration)},
+                  but you only have {formatCreditBalance(remainingSeconds)}{" "}
+                  left.
+                </div>
+              ) : null}
+
               {appState !== "idle" ? (
                 <div className="space-y-5 border border-border bg-card p-5">
                   <div className="space-y-2">
-                    <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
+                    <p className="text-xs tracking-[0.3em] text-muted-foreground uppercase">
                       Settings
                     </p>
                     <p className="text-sm text-muted-foreground">
@@ -334,14 +447,19 @@ export function CaptionierApp() {
                     disabled={isProcessing}
                   />
 
-                  <details className="border border-border bg-background p-4" open>
+                  <details
+                    className="border border-border bg-background p-4"
+                    open
+                  >
                     <summary className="cursor-pointer text-sm font-medium">
                       Advanced settings
                     </summary>
                     <div className="mt-4 space-y-5">
                       <div className="space-y-2">
                         <div className="flex items-center justify-between text-sm">
-                          <label htmlFor="max-words">Words per caption block</label>
+                          <label htmlFor="max-words">
+                            Words per caption block
+                          </label>
                           <span className="text-muted-foreground">
                             {settings.maxWordsPerBlock}
                           </span>
@@ -365,7 +483,9 @@ export function CaptionierApp() {
 
                       <div className="space-y-2">
                         <div className="flex items-center justify-between text-sm">
-                          <label htmlFor="max-duration">Max block duration</label>
+                          <label htmlFor="max-duration">
+                            Max block duration
+                          </label>
                           <span className="text-muted-foreground">
                             {settings.maxDurationSeconds.toFixed(1)}s
                           </span>
@@ -435,7 +555,12 @@ export function CaptionierApp() {
                       size="lg"
                       className="flex-1"
                       onClick={handleSubmit}
-                      disabled={!file || isProcessing}
+                      disabled={
+                        !file ||
+                        isProcessing ||
+                        !canGenerate ||
+                        !fitsCurrentBalance
+                      }
                     >
                       Generate captions
                     </Button>
@@ -468,8 +593,8 @@ export function CaptionierApp() {
                       </p>
                     </div>
                     <p className="text-sm text-muted-foreground">
-                      Review the generated subtitle blocks, check the warnings, then
-                      download or copy the SRT output.
+                      Review the generated subtitle blocks, check the warnings,
+                      then download or copy the SRT output.
                     </p>
                   </div>
 
@@ -576,11 +701,34 @@ function MetricCard({
 }) {
   return (
     <div className="space-y-2 border border-border bg-background p-4">
-      <div className="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-muted-foreground">
+      <div className="flex items-center gap-2 text-xs tracking-[0.24em] text-muted-foreground uppercase">
         {icon}
         <span>{label}</span>
       </div>
       <p className="text-sm font-medium break-words">{value}</p>
+    </div>
+  )
+}
+
+function StatusCard({
+  icon,
+  label,
+  value,
+  detail,
+}: {
+  icon: React.ReactNode
+  label: string
+  value: string
+  detail: string
+}) {
+  return (
+    <div className="space-y-3 border border-border bg-card p-4">
+      <div className="flex items-center gap-2 text-xs tracking-[0.24em] text-muted-foreground uppercase">
+        {icon}
+        <span>{label}</span>
+      </div>
+      <p className="text-lg font-medium">{value}</p>
+      <p className="text-sm leading-6 text-muted-foreground">{detail}</p>
     </div>
   )
 }
@@ -599,7 +747,13 @@ function WarningLine({
   }
 
   return (
-    <p className={tone === "warning" ? "text-yellow-700 dark:text-yellow-300" : "text-muted-foreground"}>
+    <p
+      className={
+        tone === "warning"
+          ? "text-yellow-700 dark:text-yellow-300"
+          : "text-muted-foreground"
+      }
+    >
       {tone === "warning" ? "Warning: " : ""}
       {text}
     </p>
@@ -630,6 +784,14 @@ function formatDuration(seconds: number) {
   return `${minutes}m ${remainingSeconds}s`
 }
 
+function formatCreditBalance(seconds: number | null) {
+  if (seconds === null) {
+    return "Loading..."
+  }
+
+  return formatDuration(seconds)
+}
+
 function estimateProcessingTime(mediaDurationSeconds: number) {
   const estimatedMinutes = Math.max(1, Math.ceil(mediaDurationSeconds / 600))
   return `${estimatedMinutes} minute${estimatedMinutes === 1 ? "" : "s"}`
@@ -657,6 +819,10 @@ function getAppState(file: File | null, job: TranscriptionJob) {
 
 function mapErrorMessage(error: string) {
   const normalized = error.toLowerCase()
+
+  if (normalized.includes("credits_exhausted")) {
+    return "Your free credits are exhausted. Show the paywall here next."
+  }
 
   if (normalized.includes("413") || normalized.includes("too large")) {
     return "File exceeds limit. Try compressing the audio first."

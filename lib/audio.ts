@@ -108,20 +108,24 @@ export async function chunkAudioBuffer(
   }
 }
 
-async function runFfmpegCommand(command: ffmpeg.FfmpegCommand): Promise<void> {
+async function runFfmpegCommand(command: ReturnType<typeof ffmpeg>): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     command
       .on("end", () => resolve())
-      .on("error", (error) => reject(error))
+      .on("error", (error: Error) => reject(error))
       .run()
   })
 }
 
 async function getMediaDurationSeconds(inputPath: string): Promise<number> {
   try {
-    const { stderr } = await execFileAsync(ffmpegInstaller.path, ["-i", inputPath], {
-      windowsHide: true,
-    })
+    const { stderr } = await execFileAsync(
+      ffmpegInstaller.path,
+      ["-i", inputPath],
+      {
+        windowsHide: true,
+      }
+    )
     return parseDurationFromFfmpegOutput(stderr)
   } catch (error) {
     const stderr =
@@ -138,7 +142,9 @@ async function getMediaDurationSeconds(inputPath: string): Promise<number> {
   }
 }
 
-export async function getAudioDurationSeconds(audioBuffer: Buffer): Promise<number> {
+export async function getAudioDurationSeconds(
+  audioBuffer: Buffer
+): Promise<number> {
   const tempDirectory = await mkdtemp(join(tmpdir(), TEMP_PREFIX))
   const inputPath = join(tempDirectory, "probe-audio.bin")
 
@@ -193,7 +199,12 @@ async function cleanupTempDirectory(path: string) {
     }
 
     try {
-      await rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+      await rm(path, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 100,
+      })
       return
     } catch (error) {
       const isLastAttempt = delayMs === CLEANUP_RETRY_DELAYS_MS.at(-1)

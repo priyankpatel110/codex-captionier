@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation"
 
 export default function SignInPage() {
-  redirect("/app")
+  redirect("/sign-in")
 }
