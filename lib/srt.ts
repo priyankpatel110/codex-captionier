@@ -1,4 +1,5 @@
 import type {
+  EditorCaptionSegment,
   ParsedSRTBlock,
   SRTBlock,
   SRTValidationResult,
@@ -289,6 +290,36 @@ function expandTimedSegments(
       }
     })
   })
+}
+
+export function parsedBlocksToSegments(blocks: ParsedSRTBlock[]): EditorCaptionSegment[] {
+  return blocks.map((b) => ({
+    id: b.index,
+    startSeconds: b.startSeconds,
+    endSeconds: b.endSeconds,
+    text: b.text,
+  }))
+}
+
+export function segmentsToSRT(segments: EditorCaptionSegment[]): string {
+  return segments
+    .map(
+      (s, i) =>
+        `${i + 1}\n${secondsToSRTTimestamp(s.startSeconds)} --> ${secondsToSRTTimestamp(s.endSeconds)}\n${s.text}`
+    )
+    .join("\n\n")
+}
+
+export function segmentsToVTT(segments: EditorCaptionSegment[]): string {
+  const toVTTTimestamp = (seconds: number) =>
+    secondsToSRTTimestamp(seconds).replace(",", ".")
+  const cues = segments
+    .map(
+      (s, i) =>
+        `${i + 1}\n${toVTTTimestamp(s.startSeconds)} --> ${toVTTTimestamp(s.endSeconds)}\n${s.text}`
+    )
+    .join("\n\n")
+  return `WEBVTT\n\n${cues}`
 }
 
 function tokenize(text: string) {

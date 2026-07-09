@@ -19,7 +19,11 @@ export default defineSchema({
     name: v.optional(v.string()),
     totalGrantedSeconds: v.number(),
     updatedAt: v.number(),
-  }).index("by_clerk_user_id", ["clerkUserId"]),
+    billingEnabled: v.optional(v.boolean()),
+  })
+    .index("by_clerk_user_id", ["clerkUserId"])
+    .searchIndex("search_by_email", { searchField: "email" })
+    .searchIndex("search_by_name", { searchField: "name" }),
   transcriptions: defineTable({
     clerkUserId: v.string(),
     filename: v.string(),
@@ -28,4 +32,20 @@ export default defineSchema({
     srtContent: v.string(),
     createdAt: v.number(),
   }).index("by_clerk_user_id", ["clerkUserId"]),
+  payments: defineTable({
+    clerkUserId: v.string(),
+    orderId: v.string(),
+    packageId: v.string(),
+    amountRupees: v.number(),
+    creditSeconds: v.number(),
+    status: v.union(
+      v.literal("created"),
+      v.literal("paid"),
+      v.literal("failed")
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_order_id", ["orderId"])
+    .index("by_clerk_user_id", ["clerkUserId"]),
 })

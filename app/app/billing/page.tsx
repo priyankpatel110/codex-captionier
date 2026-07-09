@@ -1,28 +1,72 @@
 "use client"
 
-import { useMutation, useQuery } from "convex/react"
+import { useQuery } from "convex/react"
 import { api } from "@/convex/_generated/api"
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { load } from "@cashfreepayments/cashfree-js"
 import { IconCreditCard, IconCheck, IconLoader2, IconSparkles } from "@tabler/icons-react"
 
 export default function BillingPage() {
   const usage = useQuery(api.users.getCurrentUserUsage)
-  const purchaseDummyCredits = useMutation(api.users.purchaseDummyCredits)
-  
+
   const [isProcessing, setIsProcessing] = useState(false)
   const [successMessage, setSuccessMessage] = useState("")
+  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null)
+
+  const paymentStatus = useQuery(
+    api.payments.getPaymentStatus,
+    pendingOrderId ? { orderId: pendingOrderId } : "skip"
+  )
+
+  useEffect(() => {
+    if (!paymentStatus) return
+
+    if (paymentStatus.status === "paid") {
+      setSuccessMessage("Successfully upgraded to Pro Tier!")
+      setPendingOrderId(null)
+      setIsProcessing(false)
+      setTimeout(() => setSuccessMessage(""), 5000)
+    } else if (paymentStatus.status === "failed") {
+      setSuccessMessage("Payment failed. Please try again.")
+      setPendingOrderId(null)
+      setIsProcessing(false)
+    }
+  }, [paymentStatus])
 
   const handlePurchase = async () => {
     setIsProcessing(true)
     setSuccessMessage("")
     try {
-      await purchaseDummyCredits({ packageId: "pro_1_hour" })
-      setSuccessMessage("Successfully upgraded to Pro Tier!")
-      setTimeout(() => setSuccessMessage(""), 5000)
+      const response = await fetch("/api/cashfree/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ packageId: "pro_1_hour" }),
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Failed to start checkout.")
+      }
+
+      setPendingOrderId(data.orderId)
+
+      const cashfree = await load({
+        mode:
+          process.env.NEXT_PUBLIC_CASHFREE_MODE === "production"
+            ? "production"
+            : "sandbox",
+      })
+
+      await cashfree.checkout({
+        paymentSessionId: data.paymentSessionId,
+        redirectTarget: "_modal",
+      })
+      // Checkout modal closed. The actual credit grant is driven by the
+      // Cashfree webhook, which the `paymentStatus` query above picks up
+      // reactively once it lands, so nothing else to do here.
     } catch (error) {
       console.error(error)
       setSuccessMessage("Payment failed. Please try again.")
-    } finally {
       setIsProcessing(false)
     }
   }
@@ -85,57 +129,65 @@ export default function BillingPage() {
         </div>
 
         {/* Upgrade Card */}
-        <div className="relative overflow-hidden rounded-xl border border-primary/20 bg-gradient-to-b from-primary/10 to-transparent p-6 shadow-sm">
-          <div className="absolute right-0 top-0 rounded-bl-xl bg-primary px-3 py-1 font-heading text-xs font-bold uppercase tracking-wider text-primary-foreground">
-            Most Popular
+        {usage?.billingEnabled ? (
+          <div className="relative overflow-hidden rounded-xl border border-primary/20 bg-gradient-to-b from-primary/10 to-transparent p-6 shadow-sm">
+            <div className="absolute right-0 top-0 rounded-bl-xl bg-primary px-3 py-1 font-heading text-xs font-bold uppercase tracking-wider text-primary-foreground">
+              Most Popular
+            </div>
+
+            <h2 className="mb-2 text-xl font-bold flex items-center gap-2">
+              <IconSparkles className="size-5 text-primary" />
+              Pro Tier
+            </h2>
+            <div className="mb-4 flex items-baseline gap-1">
+              <span className="text-3xl font-bold">₹49</span>
+              <span className="text-muted-foreground">/ hour</span>
+            </div>
+
+            <p className="mb-6 text-sm text-muted-foreground">
+              Perfect for creators. Add instant credits to your account.
+            </p>
+
+            <ul className="mb-6 space-y-3 text-sm">
+              <li className="flex items-center gap-2">
+                <IconCheck className="size-4 text-primary" />
+                <span>+1 Hour (60 mins) generation time</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <IconCheck className="size-4 text-primary" />
+                <span>Never expires</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <IconCheck className="size-4 text-primary" />
+                <span>Priority support</span>
+              </li>
+            </ul>
+
+            <button
+              onClick={handlePurchase}
+              disabled={isProcessing}
+              className="w-full flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+            >
+              {isProcessing ? (
+                <>
+                  <IconLoader2 className="size-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Buy Now"
+              )}
+            </button>
           </div>
-          
-          <h2 className="mb-2 text-xl font-bold flex items-center gap-2">
-            <IconSparkles className="size-5 text-primary" />
-            Pro Tier
-          </h2>
-          <div className="mb-4 flex items-baseline gap-1">
-            <span className="text-3xl font-bold">₹49</span>
-            <span className="text-muted-foreground">/ hour</span>
+        ) : (
+          <div className="flex flex-col items-center justify-center rounded-xl border border-border/50 bg-background/50 p-6 text-center shadow-sm">
+            <IconSparkles className="mb-3 size-8 text-muted-foreground/50" />
+            <h2 className="font-semibold">Want more credits?</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Contact support to purchase additional generation credits for your
+              account.
+            </p>
           </div>
-          
-          <p className="mb-6 text-sm text-muted-foreground">
-            Perfect for creators. Add instant credits to your account.
-          </p>
-          
-          <ul className="mb-6 space-y-3 text-sm">
-            <li className="flex items-center gap-2">
-              <IconCheck className="size-4 text-primary" />
-              <span>+1 Hour (60 mins) generation time</span>
-            </li>
-            <li className="flex items-center gap-2">
-              <IconCheck className="size-4 text-primary" />
-              <span>Never expires</span>
-            </li>
-            <li className="flex items-center gap-2">
-              <IconCheck className="size-4 text-primary" />
-              <span>Priority support</span>
-            </li>
-          </ul>
-          
-          <button
-            onClick={handlePurchase}
-            disabled={isProcessing}
-            className="w-full flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-          >
-            {isProcessing ? (
-              <>
-                <IconLoader2 className="size-4 animate-spin" />
-                Processing...
-              </>
-            ) : (
-              "Buy Now"
-            )}
-          </button>
-          <p className="mt-3 text-center text-xs text-muted-foreground">
-            * Dummy payment flow for demo purposes
-          </p>
-        </div>
+        )}
       </div>
     </div>
   )

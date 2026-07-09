@@ -3,12 +3,14 @@
 import { useQuery, useMutation } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import Link from "next/link"
-import { IconPlus, IconFileTime, IconClock, IconFileTypography, IconDownload, IconTrash } from "@tabler/icons-react"
+import { useRouter } from "next/navigation"
+import { IconPlus, IconFileTime, IconClock, IconFileTypography, IconDownload, IconTrash, IconPencil } from "@tabler/icons-react"
 import { Button } from "@/components/ui/button"
 
 export default function DashboardPage() {
   const transcriptions = useQuery(api.transcriptions.getTranscriptions)
   const deleteTranscription = useMutation(api.transcriptions.deleteTranscription)
+  const router = useRouter()
 
   const handleDelete = async (id: any) => {
     if (confirm("Are you sure you want to delete this transcription?")) {
@@ -66,7 +68,11 @@ export default function DashboardPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {transcriptions.map((t) => (
-            <div key={t._id} className="group flex flex-col justify-between rounded-xl border border-border/50 bg-card p-6 shadow-sm transition-all hover:border-primary/40 hover:shadow-md">
+            <div
+              key={t._id}
+              className="group flex flex-col justify-between rounded-xl border border-border/50 bg-card p-6 shadow-sm transition-all hover:border-primary/40 hover:shadow-md cursor-pointer"
+              onClick={() => router.push(`/app/transcriptions/${t._id}`)}
+            >
               <div className="space-y-3">
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2 rounded-full bg-background/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground ring-1 ring-inset ring-border/50">
@@ -77,7 +83,7 @@ export default function DashboardPage() {
                     <span className="text-xs font-medium text-foreground opacity-80">{t.language}</span>
                   )}
                   <button
-                    onClick={() => handleDelete(t._id)}
+                    onClick={(e) => { e.stopPropagation(); handleDelete(t._id) }}
                     className="ml-2 rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                     title="Delete transcription"
                   >
@@ -96,17 +102,17 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="mt-6 pt-4 border-t border-border/30">
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  className="w-full justify-between hover:bg-primary/10 hover:text-primary transition-colors group-hover:bg-background"
-                  onClick={() => {
+              <div className="mt-6 pt-4 border-t border-border/30 flex gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="flex-1 justify-between hover:bg-primary/10 hover:text-primary transition-colors group-hover:bg-background"
+                  onClick={(e) => {
+                    e.stopPropagation()
                     const blob = new Blob([t.srtContent], { type: "text/plain" })
                     const url = URL.createObjectURL(blob)
                     const a = document.createElement("a")
                     a.href = url
-                    // Create an explicit download name replacing original extension if any.
                     const name = t.filename.replace(/\.[^/.]+$/, "") + "_captions.srt"
                     a.download = name
                     document.body.appendChild(a)
@@ -117,6 +123,15 @@ export default function DashboardPage() {
                 >
                   <span className="font-semibold tracking-wide text-xs">Download SRT</span>
                   <IconDownload className="size-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="px-2 hover:bg-primary/10 hover:text-primary transition-colors"
+                  onClick={(e) => { e.stopPropagation(); router.push(`/app/transcriptions/${t._id}`) }}
+                  title="Edit captions"
+                >
+                  <IconPencil className="size-4" />
                 </Button>
               </div>
             </div>

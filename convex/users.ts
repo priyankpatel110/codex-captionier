@@ -1,7 +1,7 @@
 import type { UserIdentity } from "convex/server"
 import { ConvexError, v } from "convex/values"
 
-import { mutation, query } from "./_generated/server"
+import { internalMutation, mutation, query } from "./_generated/server"
 
 const DEFAULT_GENERATION_CREDITS_SECONDS = 10 * 60
 
@@ -40,6 +40,10 @@ type UserDocument = {
   clerkUserId: string
   creditsRemainingSeconds: number
   totalGrantedSeconds: number
+  billingEnabled?: boolean
+  name?: string
+  email?: string
+  imageUrl?: string
 }
 
 type ReservationDocument = {
@@ -71,6 +75,7 @@ export const getCurrentUserUsage = query({
       creditsRemainingSeconds,
       pendingSeconds,
       totalGrantedSeconds,
+      billingEnabled: user?.billingEnabled ?? false,
     }
   },
 })
@@ -199,29 +204,60 @@ export const releaseGenerationCredits = mutation({
   },
 })
 
-export const purchaseDummyCredits = mutation({
+export const ensureUser = mutation({
   args: {
-    packageId: v.string(),
+    name: v.optional(v.string()),
+    email: v.optional(v.string()),
+    imageUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const database = ctx as unknown as DatabaseContext
     const identity = await requireIdentity(database)
     const now = Date.now()
-    const user = await getOrCreateUser(database, identity, now)
+    const user = await getUserByClerkId(database, identity.subject)
 
-    // For now, regardless of packageId, we append 1 hour (3600 seconds)
-    const extraSeconds = 3600
-    const nextCredits = user.creditsRemainingSeconds + extraSeconds
-    const nextTotal = user.totalGrantedSeconds + extraSeconds
+    if (user) {
+      const patch: Record<string, unknown> = {}
+      if (args.name && args.name !== user.name) patch.name = args.name
+      if (args.email && args.email !== user.email) patch.email = args.email
+      if (args.imageUrl && args.imageUrl !== user.imageUrl) patch.imageUrl = args.imageUrl
+      if (Object.keys(patch).length > 0) {
+        await database.db.patch(user._id, { ...patch, updatedAt: now })
+      }
+    } else {
+      await database.db.insert("users", {
+        clerkUserId: identity.subject,
+        createdAt: now,
+        creditsRemainingSeconds: DEFAULT_GENERATION_CREDITS_SECONDS,
+        totalGrantedSeconds: DEFAULT_GENERATION_CREDITS_SECONDS,
+        updatedAt: now,
+        ...(args.name ? { name: args.name } : {}),
+        ...(args.email ? { email: args.email } : {}),
+        ...(args.imageUrl ? { imageUrl: args.imageUrl } : {}),
+      })
+    }
+  },
+})
+
+export const creditPurchasedSeconds = internalMutation({
+  args: {
+    clerkUserId: v.string(),
+    seconds: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const database = ctx as unknown as DatabaseContext
+    const now = Date.now()
+    const user = await getUserByClerkId(database, args.clerkUserId)
+
+    if (!user) {
+      throw new ConvexError("User not found")
+    }
 
     await database.db.patch(user._id, {
-      creditsRemainingSeconds: nextCredits,
-      totalGrantedSeconds: nextTotal,
+      creditsRemainingSeconds: user.creditsRemainingSeconds + args.seconds,
+      totalGrantedSeconds: user.totalGrantedSeconds + args.seconds,
       updatedAt: now,
     })
-
-    const pendingSeconds = await getPendingSeconds(database, identity.subject)
-    return buildUsageSummary(nextCredits, pendingSeconds, nextTotal)
   },
 })
 

@@ -112,3 +112,46 @@ export interface LanguageOption {
   label: string
   value: SarvamLanguageCode
 }
+
+export type AnimationPreset =
+  | "none"
+  | "fade"
+  | "slide-up"
+  | "typewriter"
+  | "pop"
+  | "bounce"
+  | "blur"
+  | "word-by-word"
+
+export type CaptionPosition = "bottom" | "middle" | "top"
+export type BackgroundStyle = "none" | "semi" | "solid"
+
+export interface CaptionStyle {
+  animation: AnimationPreset
+  position: CaptionPosition
+  fontSize: number
+  textColor: string
+  background: BackgroundStyle
+}
+
+export interface TextPreset {
+  id: string
+  name: string
+  tag: string
+  style: CaptionStyle
+}
+
+export interface EditorCaptionSegment {
+  id: number
+  startSeconds: number
+  endSeconds: number
+  text: string
+}
+
+export interface VideoFormat {
+  id: string
+  label: string
+  sublabel: string
+  width: number
+  height: number
+}

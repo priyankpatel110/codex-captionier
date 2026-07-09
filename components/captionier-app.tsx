@@ -6,6 +6,7 @@ import {
   IconCopy,
   IconFileMusic,
   IconLanguage,
+  IconPencil,
   IconRefresh,
   IconSparkles,
 } from "@tabler/icons-react"
@@ -14,6 +15,7 @@ import { useQuery, useMutation } from "convex/react"
 import type { FFmpeg } from "@ffmpeg/ffmpeg"
 import * as React from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 
 import { api } from "@/convex/_generated/api"
 import { DownloadButton } from "@/components/DownloadButton"
@@ -97,6 +99,8 @@ export function CaptionierApp() {
   const [localMediaDuration, setLocalMediaDuration] = React.useState<
     number | null
   >(null)
+  const [savedTranscriptionId, setSavedTranscriptionId] = React.useState<string | null>(null)
+  const router = useRouter()
   const [usageOverride, setUsageOverride] = React.useState<UsageSummary | null>(
     null
   )
@@ -386,12 +390,21 @@ export function CaptionierApp() {
 
       if (srtContent) {
         try {
-          await saveTranscriptionMutation({
+          const savedId = await saveTranscriptionMutation({
             filename: file.name,
             duration: payload.audio_duration_seconds ?? localMediaDuration ?? undefined,
             language: payload.language_code ?? languageCode ?? undefined,
             srtContent,
           })
+          if (savedId) {
+            setSavedTranscriptionId(savedId)
+            const { storeVideo } = await import("@/lib/video-storage")
+            try {
+              await storeVideo(savedId, file)
+            } catch (e) {
+              console.error("Failed to cache video in IndexedDB:", e)
+            }
+          }
         } catch (err) {
           console.error("Failed to save transcription to history:", err)
         }
@@ -838,6 +851,18 @@ export function CaptionierApp() {
                       disabled={job.status !== "done"}
                       className="flex-1 shadow-[0_0_15px_rgba(255,180,60,0.1)] transition-shadow hover:shadow-[0_0_25px_rgba(255,180,60,0.25)] font-semibold tracking-wide"
                     />
+                    {savedTranscriptionId && (
+                      <Button
+                        type="button"
+                        size="lg"
+                        variant="outline"
+                        className="flex-1 border-primary/40 bg-primary/5 text-primary hover:bg-primary/10 transition-all shadow-sm font-semibold tracking-wide"
+                        onClick={() => router.push(`/app/transcriptions/${savedTranscriptionId}`)}
+                      >
+                        <IconPencil className="size-4" />
+                        Edit Captions
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       size="lg"

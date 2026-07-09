@@ -52,6 +52,34 @@ export const getTranscriptions = query({
 })
 
 /**
+ * Get a single transcription by ID (owner-gated)
+ */
+export const getTranscription = query({
+  args: { id: v.id("transcriptions") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity()
+    if (!identity) return null
+    const t = await ctx.db.get(args.id)
+    if (!t || t.clerkUserId !== identity.subject) return null
+    return t
+  },
+})
+
+/**
+ * Update the SRT content of a transcription (owner-gated)
+ */
+export const updateSRT = mutation({
+  args: { id: v.id("transcriptions"), srtContent: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity()
+    if (!identity) throw new Error("Not authenticated")
+    const t = await ctx.db.get(args.id)
+    if (!t || t.clerkUserId !== identity.subject) throw new Error("Not found")
+    await ctx.db.patch(args.id, { srtContent: args.srtContent })
+  },
+})
+
+/**
  * Delete a transcription by ID
  */
 export const deleteTranscription = mutation({
