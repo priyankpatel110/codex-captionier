@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 
 import { api } from "@/convex/_generated/api"
+import type { Id } from "@/convex/_generated/dataModel"
 import {
   chunkAudioBuffer,
   extractAudioFromVideo,
@@ -30,43 +31,62 @@ const MAX_REST_DURATION_SECONDS = 28
 export async function POST(request: Request) {
   let convexClient: Awaited<ReturnType<typeof createAuthedConvexClient>> = null
   let requestId: string | null = null
+  let storageId: Id<"_storage"> | null = null
 
   try {
     validateServerConfiguration()
-    const formData = await request.formData()
-    const file = formData.get("audio")
-    const languageCode = formData.get("languageCode")
-    const mode = parseMode(formData.get("mode"))
-
-    if (!(file instanceof File)) {
-      return NextResponse.json(
-        { error: "Missing audio file in form-data field `audio`." },
-        { status: 400 }
-      )
+    const body = (await request.json()) as {
+      storageId: Id<"_storage">
+      filename: string
+      fileType: string
+      languageCode?: string
+      mode?: string
     }
+    const languageCode = body.languageCode
+    const mode = parseMode(body.mode ?? null)
+    storageId = body.storageId
 
-    if (!file.type.startsWith("audio/") && !file.type.startsWith("video/")) {
+    if (!body.fileType.startsWith("audio/") && !body.fileType.startsWith("video/")) {
       return NextResponse.json(
         { error: "Only audio and video uploads are accepted." },
         { status: 400 }
       )
     }
 
-    if (file.size > MAX_UPLOAD_BYTES) {
+    convexClient = await createAuthedConvexClient()
+
+    if (!convexClient) {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 })
+    }
+
+    const fileUrl = await convexClient.client.query(api.files.getFileUrl, {
+      storageId,
+    })
+
+    if (!fileUrl) {
+      return NextResponse.json(
+        { error: "Uploaded file was not found." },
+        { status: 400 }
+      )
+    }
+
+    const fileResponse = await fetch(fileUrl)
+    const uploadedBuffer = Buffer.from(await fileResponse.arrayBuffer())
+
+    if (uploadedBuffer.byteLength > MAX_UPLOAD_BYTES) {
       return NextResponse.json(
         { error: "File exceeds the 500 MB limit." },
         { status: 413 }
       )
     }
 
-    const uploadedBuffer = Buffer.from(await file.arrayBuffer())
     const requestedLanguageCode =
       typeof languageCode === "string" && languageCode.length > 0
         ? (languageCode as SarvamLanguageCode)
         : undefined
 
-    const audioBuffer = file.type.startsWith("video/")
-      ? await extractAudioFromVideo(uploadedBuffer, file.type)
+    const audioBuffer = body.fileType.startsWith("video/")
+      ? await extractAudioFromVideo(uploadedBuffer, body.fileType)
       : uploadedBuffer
 
     const audioDurationSeconds = await getAudioDurationSeconds(audioBuffer)
@@ -74,12 +94,6 @@ export async function POST(request: Request) {
     const shouldChunk =
       audioBuffer.byteLength > MAX_DIRECT_UPLOAD_BYTES ||
       audioDurationSeconds > MAX_REST_DURATION_SECONDS
-
-    convexClient = await createAuthedConvexClient()
-
-    if (!convexClient) {
-      return NextResponse.json({ error: "Unauthorized." }, { status: 401 })
-    }
 
     requestId = crypto.randomUUID()
 
@@ -91,11 +105,11 @@ export async function POST(request: Request) {
     const response = shouldChunk
       ? await transcribeChunkedAudio(
           audioBuffer,
-          file.name,
+          body.filename,
           requestedLanguageCode,
           mode
         )
-      : await transcribeAudio(audioBuffer, toAudioFilename(file.name), {
+      : await transcribeAudio(audioBuffer, toAudioFilename(body.filename), {
           languageCode: requestedLanguageCode,
           model: "saaras:v3",
           mode,
@@ -143,6 +157,14 @@ export async function POST(request: Request) {
       },
       { status: 500 }
     )
+  } finally {
+    if (storageId && convexClient) {
+      try {
+        await convexClient.client.mutation(api.files.deleteFile, { storageId })
+      } catch {
+        // Best-effort cleanup; ignore failures.
+      }
+    }
   }
 }
 

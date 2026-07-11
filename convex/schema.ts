@@ -20,8 +20,12 @@ export default defineSchema({
     totalGrantedSeconds: v.number(),
     updatedAt: v.number(),
     billingEnabled: v.optional(v.boolean()),
+    environment: v.optional(
+      v.union(v.literal("development"), v.literal("production"))
+    ),
   })
     .index("by_clerk_user_id", ["clerkUserId"])
+    .index("by_environment", ["environment"])
     .searchIndex("search_by_email", { searchField: "email" })
     .searchIndex("search_by_name", { searchField: "name" }),
   transcriptions: defineTable({

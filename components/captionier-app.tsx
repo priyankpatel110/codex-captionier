@@ -113,6 +113,7 @@ export function CaptionierApp() {
     | undefined
   const usage = usageOverride ?? liveUsage ?? null
   const saveTranscriptionMutation = useMutation(api.transcriptions.saveTranscription)
+  const generateUploadUrl = useMutation(api.files.generateUploadUrl)
   const parsedBlocks = React.useMemo(() => parseSRTContent(preview), [preview])
   const validation = React.useMemo(() => validateSRT(preview), [preview])
   const totalDuration =
@@ -314,13 +315,6 @@ export function CaptionierApp() {
           : "Uploading to Sarvam.",
       })
 
-      const formData = new FormData()
-      formData.append("audio", uploadFile)
-      formData.append("mode", settings.mode)
-      if (languageCode !== "unknown") {
-        formData.append("languageCode", languageCode)
-      }
-
       if (uploadFile.type.startsWith("video/")) {
         setJob({
           status: "uploading",
@@ -328,6 +322,19 @@ export function CaptionierApp() {
           message: "Uploading extracted audio to Sarvam.",
         })
       }
+
+      const uploadUrl = await generateUploadUrl()
+      const uploadResult = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": uploadFile.type },
+        body: uploadFile,
+      })
+
+      if (!uploadResult.ok) {
+        throw new Error("Failed to upload the file.")
+      }
+
+      const { storageId } = (await uploadResult.json()) as { storageId: string }
 
       setJob({
         status: "transcribing",
@@ -337,7 +344,14 @@ export function CaptionierApp() {
 
       const response = await fetch("/api/transcribe", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storageId,
+          filename: uploadFile.name,
+          fileType: uploadFile.type,
+          mode: settings.mode,
+          languageCode: languageCode !== "unknown" ? languageCode : undefined,
+        }),
       })
 
       const payload = (await response.json()) as

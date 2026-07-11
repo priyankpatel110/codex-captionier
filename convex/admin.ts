@@ -4,28 +4,45 @@ import { mutation, query } from "./_generated/server"
 import type { MutationCtx, QueryCtx } from "./_generated/server"
 import type { Doc } from "./_generated/dataModel"
 
+function getAdminIds(): string[] {
+  return (process.env.ADMIN_CLERK_USER_ID ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0)
+}
+
 export const isCurrentUserAdmin = query({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity()
     if (!identity) return false
-    const adminId = process.env.ADMIN_CLERK_USER_ID
-    return Boolean(adminId && identity.subject === adminId)
+    return getAdminIds().includes(identity.subject)
   },
 })
 
 async function requireAdmin(ctx: QueryCtx | MutationCtx): Promise<void> {
   const identity = await ctx.auth.getUserIdentity()
   if (!identity) throw new Error("Unauthorized")
-  const adminId = process.env.ADMIN_CLERK_USER_ID
-  if (!adminId || identity.subject !== adminId) throw new Error("Forbidden")
+  if (!getAdminIds().includes(identity.subject)) throw new Error("Forbidden")
 }
 
+const environmentValidator = v.union(
+  v.literal("development"),
+  v.literal("production")
+)
+
 export const getAnalytics = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { environment: v.optional(environmentValidator) },
+  handler: async (ctx, args) => {
     await requireAdmin(ctx)
-    const users = await ctx.db.query("users").collect()
+    const users = args.environment
+      ? await ctx.db
+          .query("users")
+          .withIndex("by_environment", (q) =>
+            q.eq("environment", args.environment)
+          )
+          .collect()
+      : await ctx.db.query("users").collect()
     const transcriptions = await ctx.db.query("transcriptions").collect()
 
     const totalSecondsGranted = users.reduce((sum, u) => sum + u.totalGrantedSeconds, 0)
@@ -41,15 +58,27 @@ export const getAnalytics = query({
 })
 
 export const listUsers = query({
-  args: { paginationOpts: paginationOptsValidator },
+  args: {
+    paginationOpts: paginationOptsValidator,
+    environment: v.optional(environmentValidator),
+  },
   handler: async (ctx, args) => {
     await requireAdmin(ctx)
+    if (args.environment) {
+      return await ctx.db
+        .query("users")
+        .withIndex("by_environment", (q) =>
+          q.eq("environment", args.environment)
+        )
+        .order("desc")
+        .paginate(args.paginationOpts)
+    }
     return await ctx.db.query("users").order("desc").paginate(args.paginationOpts)
   },
 })
 
 export const searchUsers = query({
-  args: { query: v.string() },
+  args: { query: v.string(), environment: v.optional(environmentValidator) },
   handler: async (ctx, args) => {
     await requireAdmin(ctx)
     if (args.query.length < 2) return []
@@ -72,7 +101,10 @@ export const searchUsers = query({
         results.push(user)
       }
     }
-    return results
+
+    return args.environment
+      ? results.filter((user) => user.environment === args.environment)
+      : results
   },
 })
 

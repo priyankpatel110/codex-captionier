@@ -44,6 +44,13 @@ type UserDocument = {
   name?: string
   email?: string
   imageUrl?: string
+  environment?: "development" | "production"
+}
+
+function getEnvironment(issuer: string): "development" | "production" {
+  return issuer === process.env.CLERK_JWT_ISSUER_DOMAIN_PROD
+    ? "production"
+    : "development"
 }
 
 type ReservationDocument = {
@@ -216,11 +223,14 @@ export const ensureUser = mutation({
     const now = Date.now()
     const user = await getUserByClerkId(database, identity.subject)
 
+    const environment = getEnvironment(identity.issuer)
+
     if (user) {
       const patch: Record<string, unknown> = {}
       if (args.name && args.name !== user.name) patch.name = args.name
       if (args.email && args.email !== user.email) patch.email = args.email
       if (args.imageUrl && args.imageUrl !== user.imageUrl) patch.imageUrl = args.imageUrl
+      if (user.environment !== environment) patch.environment = environment
       if (Object.keys(patch).length > 0) {
         await database.db.patch(user._id, { ...patch, updatedAt: now })
       }
@@ -231,6 +241,7 @@ export const ensureUser = mutation({
         creditsRemainingSeconds: DEFAULT_GENERATION_CREDITS_SECONDS,
         totalGrantedSeconds: DEFAULT_GENERATION_CREDITS_SECONDS,
         updatedAt: now,
+        environment,
         ...(args.name ? { name: args.name } : {}),
         ...(args.email ? { email: args.email } : {}),
         ...(args.imageUrl ? { imageUrl: args.imageUrl } : {}),
@@ -304,6 +315,7 @@ async function getOrCreateUser(
     ...profile,
     totalGrantedSeconds: DEFAULT_GENERATION_CREDITS_SECONDS,
     updatedAt: now,
+    environment: getEnvironment(identity.issuer),
   })
   const createdUser = (await ctx.db.get(userId)) as UserDocument | null
 

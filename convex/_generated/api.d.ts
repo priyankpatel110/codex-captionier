@@ -9,6 +9,7 @@
  */
 
 import type * as admin from "../admin.js";
+import type * as files from "../files.js";
 import type * as payments from "../payments.js";
 import type * as transcriptions from "../transcriptions.js";
 import type * as users from "../users.js";
@@ -21,6 +22,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   admin: typeof admin;
+  files: typeof files;
   payments: typeof payments;
   transcriptions: typeof transcriptions;
   users: typeof users;

@@ -5,6 +5,7 @@ import { api } from "@/convex/_generated/api"
 import Link from "next/link"
 import {
   IconUsers,
+  IconCode,
   IconFileText,
   IconClock,
   IconDatabase,
@@ -19,15 +20,27 @@ function formatSeconds(seconds: number) {
 }
 
 export default function AdminDashboard() {
-  const analytics = useQuery(api.admin.getAnalytics)
+  const analytics = useQuery(api.admin.getAnalytics, {})
+  const prodAnalytics = useQuery(api.admin.getAnalytics, {
+    environment: "production",
+  })
+  const devAnalytics = useQuery(api.admin.getAnalytics, {
+    environment: "development",
+  })
 
   const stats = analytics
     ? [
         {
-          label: "Total Users",
-          value: analytics.totalUsers.toLocaleString(),
+          label: "Production Users",
+          value: (prodAnalytics?.totalUsers ?? 0).toLocaleString(),
           icon: IconUsers,
-          desc: "Registered accounts",
+          desc: "Signed in via captionier.priyankhere.com",
+        },
+        {
+          label: "Dev Users",
+          value: (devAnalytics?.totalUsers ?? 0).toLocaleString(),
+          icon: IconCode,
+          desc: "Signed in via localhost / dev testing",
         },
         {
           label: "Total Transcriptions",
@@ -62,8 +75,8 @@ export default function AdminDashboard() {
       </div>
 
       {!analytics ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, i) => (
             <div
               key={i}
               className="h-32 animate-pulse rounded-xl border border-border/50 bg-muted/30"
@@ -71,7 +84,7 @@ export default function AdminDashboard() {
           ))}
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           {stats.map(({ label, value, icon: Icon, desc }) => (
             <div
               key={label}

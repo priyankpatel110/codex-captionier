@@ -7,12 +7,14 @@ import {
   IconMicrophone,
   IconLayoutDashboard,
   IconUsers,
+  IconCode,
   IconArrowLeft,
 } from "@tabler/icons-react"
 
 const navItems = [
   { href: "/admin", label: "Dashboard", icon: IconLayoutDashboard, exact: true },
-  { href: "/admin/users", label: "Users", icon: IconUsers, exact: false },
+  { href: "/admin/users", label: "Users", icon: IconUsers, exact: true },
+  { href: "/admin/users/development", label: "Dev Users", icon: IconCode, exact: false },
 ]
 
 export function AdminSidebar() {
