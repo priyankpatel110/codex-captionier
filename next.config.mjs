@@ -2,12 +2,12 @@
 const nextConfig = {
   experimental: {
     proxyClientMaxBodySize: 500 * 1024 * 1024,
+    outputFileTracingIncludes: {
+      "/api/transcribe": ["./node_modules/@ffmpeg-installer/**/*"],
+      "/api/extract-audio": ["./node_modules/@ffmpeg-installer/**/*"],
+    },
   },
-  serverExternalPackages: [
-    "@ffmpeg-installer/ffmpeg",
-    "@ffmpeg-installer/win32-x64",
-    "fluent-ffmpeg",
-  ],
+  serverExternalPackages: ["@ffmpeg-installer/ffmpeg", "fluent-ffmpeg"],
   async headers() {
     return [
       {
